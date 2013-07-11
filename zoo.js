@@ -10,12 +10,28 @@
     var doc = window.document,
         head = doc.getElementsByTagName('head')[0],
     
+        //TODO 常用对象定义为变量
+        Config = {},
+        Modules = Config.modules = {},
+        Groups = Config.groups = {},
+        
+        Env = {},
+        Loaded = Env.loaded = {},
+        Attached = Env.attached = {},
+        Pending = Env.pending = {},
+        Waiting = Env.waiting = {},
+        ModuleFns = Env.moduleFns = {},
+        
     Z = {
         version: '0.0.1~alpha',
         Config : {
             debug: false,
             modules: {},
-            groups: {}
+            groups: {},
+            maxURLLength: 2048,
+            maxComboNum: 50,
+            combine: false,
+            comboSep: ','
         },
         Env: {
             host: window,
@@ -23,7 +39,7 @@
             attached: {},
             pending: {},
             waiting: {},
-            fns: {}
+            moduleFns: {}
         }
     };
     
@@ -33,6 +49,10 @@
     
     function isFunction(obj) {
         return typeof obj === 'function';
+    }
+    
+    function isUndefined(obj) {
+        return typeof obj === 'undefined';
     }
     
     function isArray(obj) {
@@ -123,6 +143,10 @@
     
     mix(Z, {
         
+        init: function() {
+            return this;
+        },
+        
         /**
          * 控制台输出
          * @method log
@@ -157,6 +181,7 @@
             for (k in cfg) {
                 if (c.hasOwnProperty(k)) {
                     v = c[k];
+                    o = {};
                     switch (k) {
                         case 'modules':
                             this.addModule(v);
@@ -214,17 +239,17 @@
             var config = this.Config,
                 groups = config.groups;
             
-            if (!isString(group)) {
+            if (!isString(name)) {
                 group = name;
                 each(group, function(g, n) {
                     this.addGroup(n, g);
                 }, this);
             } else {
                 group.name = name;
-                mix(groups[name], group);
+                groups[name] = mix(groups[name], group);
                 if (group.modules) {
                     this.addModule(group.modules, name);
-                    mix(groups[name].modules, group.modules);
+                    groups[name].modules = mix(groups[name].modules, group.modules);
                 }
             }
             
@@ -258,18 +283,62 @@
          */
         get: function(type, url, opts, callback, parallel) {
             var self = this,
-                attrs = merge(opts && opts.attrs),
                 isCSS = type === 'css',
                 tag = isCSS ? 'link' : 'script',
-                node;
+                node, attrs, cb, next, done, len, finish;
+            
+            if (isFunction(opts)) {
+                parallel = callback;
+                callback = opts;
+                opts = null;
+            }
+            
+            if (isArray(url)) {
+                done = 0;
+                len = url.length;
+                parallel = parallel === false ? false : true;
+                
+                cb = function() {
+                    if (++done >= len) {
+                        callback && callback.call(self);
+                    } else if (!parallel) {
+                        next();
+                    }
+                };
+                
+                next = function() {
+                    self.get(type, url[done], opts, cb, parallel);    
+                };
+                
+                if (parallel) {
+                    each(url, function() {
+                        next();
+                    });
+                } else {
+                    next();
+                }
+                
+                return this;
+            }
+            
+            //TODO 区分success和error
+            
+            if (!isString(url)) {
+                finish = url.callback;
+                attr = url.opts && url.opts.attrs;
+                url = url.url;
+            }
+            
+            //TODO override?
+            attrs = merge(opts && opts.attrs);
             
             if (isCSS) {
-                mix(attrs, {
+                attrs = mix(attrs, {
                     href: url,
                     rel: 'stylesheet' 
                 });
             } else {
-                mix(attrs, {
+                attrs = mix(attrs, {
                     src: url,
                     charset: 'utf-8',
                     type: 'text/javascript'
@@ -282,14 +351,39 @@
                 node.async = true;
             }
             
+            //TODO 区分success和error
             node.onload = node.onerror = function() {
                 node.onload = node.onerror = null;
+                finish && finish.call(self);
                 callback && callback.call(self);
             };
             
             head.appendChild(node);
             
             return this;
+        },
+        
+        /**
+         * 获取组的配置
+         * @param {String|Object} group 组或组名
+         * @param {String} key 参数名
+         * @param {Any} def 如果都没有时的默认值
+         */
+        getGroupConfig: function(group, key, def) {
+            var config = this.Config,
+                groups = config.groups;
+            
+            if (isString(group)) {
+                group = groups[group];
+            }
+            
+            if (group && !isUndefined(group[key])) {
+                return group[key];
+            } else if (!isUndefined(config[key])) {
+                return config[key];
+            } else {
+                return def;
+            }
         },
         
         /**
@@ -328,6 +422,48 @@
         },
         
         /**
+         * 排除已经下载或者是下载中的或者无效的模块
+         * @method exclude
+         * @param {Array} 模块数组
+         */
+        exclude: function(use) {
+            var config = this.Config,
+                env = this.Env,
+                modules = config.modules,
+                pending = env.pending,
+                loaded = env.loaded;
+            
+            return map(use, function(m) {
+                if (!loaded[m] && !pending[m] && modules[m]) {
+                    return true;
+                }
+            });
+        },
+        
+        /**
+         * 按comboBase分类
+         * @method assort
+         * @param {Array} 模块数组
+         */
+        assort: function(use) {
+            var config = this.Config,
+                modules = config.modules,
+                assorted = {},
+                comboBase, module;
+            
+            each(use, function(m) {
+                module = modules[m];
+                if (module) {
+                    comboBase = this.getGroupConfig(module.group, 'comboBase', '');
+                    assorted[comboBase] = assorted[comboBase] || [];
+                    assorted[comboBase].push(m);
+                }   
+            }, this);
+            
+            return assorted;
+        },
+        
+        /**
          * 处理模块依赖关系，返回未下载模块数组
          * @method resolve
          * @param {Object} use 使用的模块
@@ -340,25 +476,69 @@
                 pending = env.pending,
                 modules = config.modules,
                 groups = config.groups,
+                maxLen = config.maxURLLength,
+                maxNum = config.maxComboNum,
+                comboSep = config.comboSep,
+                comboSepLen = comboSep.length,
                 calculated = this.calculate(use),
-                resolved = {
-                    urls: [],
-                    mods: [],
-                    calculated: calculated
-                },
-                type, module, group;
+                excluded = this.exclude(calculated),
+                assorted = this.assort(excluded),
+                urls = { js: [], css: [] },
+                mods = { js: [], css: [] },
+                end, type, css, module, group,
+                base, root, comboBase, combine,
+                path, comboTemp, modsTemp;
             
-            //TODO 处理combo链接
-            each(calculated, function(m) {
-                module = modules[m];
-                group = groups[module.group];
-                if (!loaded[m] && !pending[m]) {
-                    resolved.urls.push(module.fullpath);
-                    resolved.mods.push(m);
-                }
+            function addSingle(mod, url, type) {
+                urls[type].push(url);
+                mods[type].push(mod);
+            }
+            
+            //TODO 时间戳
+            each(assorted, function(array, source) {
+                
+                comboTemp = { js: source, css: source };
+                modsTemp = { js: [], css: [] };
+                end = array.length - 1;
+                
+                each(array, function(m, i) {
+                    module = modules[m];
+                    group = groups[module.group];
+                    type = module.type || 'js';
+                    css = type === 'css';
+                    
+                    base = this.getGroupConfig(group, 'base', '');
+                    root = this.getGroupConfig(group, 'root', '');
+                    timeStamp = module.timeStamp || this.getGroupConfig(group, 'timeStamp', '');
+                    combine = isUndefined(module.combine) ? this.getGroupConfig(group, 'combine') : module.combine;
+                    path = module.path || (module.name + '.' + type);
+                    async = module.async !== false || (!module.requires || !module.requires.length)
+                    
+                    if (!combine || module.fullpath || !async) {
+                        addSingle(m, module.fullpath || (combine ? (source + root) : base) + path, type);
+                    } else {
+                        if (modsTemp[type].length == maxNum || comboTemp[type] + root + path + comboSepLen > maxLen) {
+                            urls[type].push(comboTemp[type].substring(0, comboTemp[type].length - comboSepLen));
+                            mods[type].push(modsTemp[type]);
+                            comboTemp[type] = source;
+                            modsTemp[type] = [];
+                        }
+                        comboTemp[type] += (root + path + comboSep);
+                        modsTemp[type].push(m);
+                        if (i === end) {
+                            urls[type].push(comboTemp[type].substring(0, comboTemp[type].length - comboSepLen));
+                            mods[type].push(modsTemp[type]);
+                        }
+                    }
+                }, this);
             }, this);
             
-            return resolved;
+            return {
+                urls: urls,
+                mods: mods,
+                calculated: calculated,
+                excluded: excluded
+            };
         },
         
         /**
@@ -367,8 +547,11 @@
          * @param {Object} resolved 分析过后的数组对象
          */
         load: function(resolved) {
-            each(resolved.mods, function(mod, i) {
-                this.insert(resolved.urls[i], mod);
+            each(resolved.mods.css, function(mod, i) {
+                this.insert(resolved.urls.css[i], mod, 'css');
+            }, this);
+            each(resolved.mods.js, function(mod, i) {
+                this.insert(resolved.urls.js[i], mod, 'js');
             }, this);
             
             return this;
@@ -380,36 +563,40 @@
          * @param {String} url 文件地址
          * @param {String} mod 模块名称
          */
-        insert: function(url, mod) {
+        insert: function(url, mod, type) {
             var self = this,
                 config = this.Config,
                 env = this.Env,
                 modules = config.modules,
-                groups = config.groups,
-                loaded = env.loaded,
                 pending = env.pending,
-                module = modules[mod],
-                type, requires;
+                module, requires, async;
             
-            //TODO 处理combo链接
-            if (module) {
-                if (!loaded[mod] && !pending[mod]) {
-                    function insert() {
-                        pending[mod] = true;
-                        self.get(module.type, url, null, function() {
-                            self.done(mod);
-                        });
-                    }
-                    if (module.async !== false || module.type === 'css' || (!module.requires || !module.requires.length)) {
-                        insert();
-                    } else {
-                        this.wait(module.requires, function() {
-                            insert();
-                        });
-                    }
-                }
+            function insert() {
+                self.get(type, url, null, function() {
+                    self.done(mod);
+                });
+            }
+            
+            if (isArray(mod)) {
+                //combo
+                each(mod, function(m) {
+                    pending[m] = true;  
+                });
+                insert();
             } else {
-                this.log('module ' + mod + ' not found.', 'warn', 'insert');
+                //not combo
+                module = modules[mod];
+                requires = module.requires;
+                async = module.async !== false || (!requires || !requires.length);
+                if (async) {
+                    pending[mod] = true; 
+                    insert();
+                } else {
+                    this.wait(requires, function() {
+                        pending[mod] = true;
+                        insert();
+                    });
+                }
             }
             
             return this;
@@ -493,15 +680,16 @@
                 modules = config.modules,
                 loaded = env.loaded,
                 attached = env.attached,
-                fns = env.fns,
+                moduleFns = env.moduleFns,
                 fn;
             
+            //TODO add requires
             if (isArray(mod)) {
                 each(mod, function(m) {
                     this.attach(m);
                 }, this);
             } else {
-                if (loaded[mod] && !attached[mod] && (fn = fns[mod])) {
+                if (loaded[mod] && !attached[mod] && (fn = moduleFns[mod])) {
                     fn.call(this, this);
                     attached[mod] = true;
                 }
@@ -521,15 +709,18 @@
             var config = this.Config,
                 env = this.Env,
                 attached = env.attached,
-                fns = env.fns;
-                
-            this.done(name);
+                loaded = env.loaded,
+                moduleFns = env.moduleFns;
+            
+            if (!loaded[name]) {
+                this.done(name);
+            }    
             delete attached[name];
             
-            if (fns[name]) {
+            if (moduleFns[name]) {
                 this.log('module ' + name + ' already exists.', 'warn', 'add');
             } else {
-                fns[name] = fn;
+                moduleFns[name] = fn;
             }
             
             return this;
@@ -545,7 +736,7 @@
             var use = toArray(arguments),
                 callback = isFunction(use[use.length - 1]) ? use.pop() : null,
                 resolved = this.resolve(use);
-            
+
             this.wait(resolved.calculated, function() {
                 this.attach(resolved.calculated);
                 callback && callback.call(this, this, resolved.calculated);
@@ -573,6 +764,6 @@
         
     });
     
-    window.Zoo = window.ZOO = Z;
+    window.Zoo = window.ZOO = Z.init();
     
 })(this);
