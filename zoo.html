@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Zoo</title>
+        <script src="zoo.js"></script>
+    </head>
+    <body>
+        <script>
+            var t = '?t=' + (+new Date());
+            Zoo.config({
+                debug: true,
+                modules: {
+                    'underscore': {
+                        fullpath: 'http://underscorejs.org/underscore.js' + t    
+                    },
+                    'backbone': {
+                        fullpath: 'http://backbonejs.org/backbone.js' + t,
+                        requires: ['underscore', 'jquery'],
+                        async: false 
+                    },
+                    'jquery': {
+                        fullpath: 'http://code.jquery.com/jquery-1.10.2.js' + t
+                    },
+                    'jqueryui-skin': {
+                        fullpath: 'http://code.jquery.com/ui/1.10.3/themes/smoothness/jquery-ui.css' + t,
+                        type: 'css'
+                    },
+                    'jqueryui': {
+                        fullpath: 'http://code.jquery.com/ui/1.10.3/jquery-ui.js' + t,
+                        requires: ['jquery', 'jqueryui-skin'],
+                        async: false
+                    }
+                }
+            });
+            Zoo.use('backbone', function(Z, mods) {
+                console.log('use 1');
+                console.log(mods);
+            });
+            Zoo.use('backbone', 'jqueryui', function(Z, mods) {
+                console.log('use 2');
+                console.log(mods);
+            });
+        </script>
+    </body>
+</html>
