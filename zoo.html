@@ -37,8 +37,12 @@
                 console.log('use 1');
                 console.log(mods);
             });
-            Zoo.use('backbone', 'jqueryui', function(Z, mods) {
+            Zoo.use('jqueryui', function(Z, mods) {
                 console.log('use 2');
+                console.log(mods);
+            });
+            Zoo.use('backbone', 'jqueryui', function(Z, mods) {
+                console.log('use 3');
                 console.log(mods);
             });
         </script>
