@@ -9,60 +9,50 @@
     
     var doc = window.document,
         head = doc.getElementsByTagName('head')[0],
-    
-        //TODO 常用对象定义为变量
-        Config = {},
-        Modules = Config.modules = {},
-        Groups = Config.groups = {},
         
+        readyList = [],
+        domready = false,
+    
+        Config = {},
         Env = {},
+        
+        Modules = Env.modules = {},
+        Groups = Env.groups = {},
+        
         Loaded = Env.loaded = {},
         Attached = Env.attached = {},
         Pending = Env.pending = {},
         Waiting = Env.waiting = {},
         ModuleFns = Env.moduleFns = {},
         
-    Z = {
-        version: '0.0.1~alpha',
-        Config : {
-            debug: false,
-            modules: {},
-            groups: {},
-            maxURLLength: 2048,
-            maxComboNum: 50,
-            combine: false,
-            comboSep: ','
-        },
-        Env: {
-            host: window,
-            loaded: {},
-            attached: {},
-            pending: {},
-            waiting: {},
-            moduleFns: {}
-        }
-    };
+    ZOO = {};
     
+    // 转化为数组
     function toArray(obj, index) {
         return Array.prototype.slice.call(obj, index || 0);
     }
     
+    // 是否是function
     function isFunction(obj) {
         return typeof obj === 'function';
     }
     
+    // 是否是undefined
     function isUndefined(obj) {
         return typeof obj === 'undefined';
     }
     
+    // 是否是array
     function isArray(obj) {
         return Object.prototype.toString.call(obj) === '[object Array]';
     }
     
+    // 是否是string
     function isString(obj) {
         return Object.prototype.toString.call(obj) === '[object String]';
     }
     
+    // 循环
     function each(obj, func, context) {
         if (isArray(obj)) {
             for (var i = 0, l = obj.length; i < l; i++) {
@@ -77,7 +67,8 @@
         }
     }
     
-    function map(array, func, context) {
+    // 过滤
+    function filter(array, func, context) {
         var result = [];
         
         each(array, function(item, index) {
@@ -89,24 +80,33 @@
         return result;
     }
     
+    // 去重
     function dedupe(array) {
         var hash    = {},
-            results = [],
-            i = 0,
-            l = array.length,
-            item;
+            results = [];
     
-        for (; i < l; i++) {
-            item = array[i];
-            if (!hash.hasOwnProperty(item)) {
+        each(array, function(item) {
+            if (hash[item] !== 1) {
                 hash[item] = 1;
                 results.push(item);
             }
-        }
+        });
      
         return results;
     }
     
+    // 获取key数组
+    function keys(obj) {
+        var results = [];
+        
+        each(obj, function(v, k) {
+            results.push(k);
+        });
+        
+        return results;
+    }
+    
+    // 混入
     function mix(r, s, o) {
         r = r || {};
         
@@ -121,6 +121,7 @@
         return r;
     }
     
+    // 合并
     function merge() {
         var args = toArray(arguments),
             override = args[args.length - 1] === false ? args.pop() : true,
@@ -133,6 +134,7 @@
         return obj;
     }
     
+    // 生成节点
     function createNode(tag, attrs) {
         var node = document.createElement(tag);
         each(attrs, function(attr, name) {
@@ -141,8 +143,60 @@
         return node;
     }
     
-    mix(Z, {
+    // domready
+    function ready(func, context) {
+        if (isFunction(func)) {
+            function doReady() {
+                func.call(context);
+            }
+            if (domready) {
+                doReady();
+            } else {
+                readyList.push(doReady);
+            }
+        }
+    }
+    
+    // 添加domready监听
+    document.addEventListener('DOMContentLoaded', function() {
+        domready = true;
+        while (readyList.length) {
+            readyList.shift().call(window);
+        }
+    });
+    
+    
+    //TODO filter
+    // 配置
+    mix(Config, {
+        debug: false,
+        core: null,
+        onload: null,
+        maxURLLength: 2048,
+        maxComboNum: 50,
+        combine: false,
+        comboSep: ','
+    });
+    
+    // 环境
+    mix(Env, {
+        host: window
+    });
+    
+    // 混入属性
+    mix(ZOO, {
+       Config: Config,
+       Env: Env,
+       version: '0.0.1~alpha'
+    });
+    
+    // 混入方法
+    mix(ZOO, {
         
+        /**
+         * 初始化
+         * @method init
+         */
         init: function() {
             return this;
         },
@@ -156,7 +210,7 @@
          * @public
          */
         log: function(msg, method, src) {
-            if (this.Config.debug) {
+            if (Config.debug) {
                 if (src) {
                     msg = src + ': ' + msg;
                 }
@@ -174,8 +228,7 @@
          * @public
          */
         config: function(cfg) {
-            var config = this.Config,
-                c = cfg || {},
+            var c = cfg || {},
                 k, v;
             
             for (k in cfg) {
@@ -190,7 +243,7 @@
                             this.addGroup(v);
                             break;
                         default:
-                            config[k] = v;
+                            Config[k] = v;
                     }
                 }
             }
@@ -207,9 +260,6 @@
          * @public
          */
         addModule: function(name, module, group) {
-            var config = this.Config,
-                modules = config.modules;
-                
             if (!isString(name)) {
                 group = module;
                 module = name;
@@ -217,12 +267,12 @@
                     this.addModule(n, m, group);
                 }, this);
             } else {
-                if (modules[name]) {
+                if (Modules[name]) {
                     this.log('module ' + n + ' already exist.', 'warn', 'addModule');
                 } else {
                     module.group = group;
                     module.name = name;
-                    modules[name] = module;
+                    Modules[name] = module;
                 }
             }
             
@@ -236,9 +286,6 @@
          * @param {Object} group 组对象
          */
         addGroup: function(name, group) {
-            var config = this.Config,
-                groups = config.groups;
-            
             if (!isString(name)) {
                 group = name;
                 each(group, function(g, n) {
@@ -246,10 +293,10 @@
                 }, this);
             } else {
                 group.name = name;
-                groups[name] = mix(groups[name], group);
+                Groups[name] = mix(Groups[name], group);
                 if (group.modules) {
                     this.addModule(group.modules, name);
-                    groups[name].modules = mix(groups[name].modules, group.modules);
+                    Groups[name].modules = mix(Groups[name].modules, group.modules);
                 }
             }
             
@@ -370,17 +417,14 @@
          * @param {Any} def 如果都没有时的默认值
          */
         getGroupConfig: function(group, key, def) {
-            var config = this.Config,
-                groups = config.groups;
-            
             if (isString(group)) {
-                group = groups[group];
+                group = Groups[group];
             }
             
             if (group && !isUndefined(group[key])) {
                 return group[key];
-            } else if (!isUndefined(config[key])) {
-                return config[key];
+            } else if (!isUndefined(Config[key])) {
+                return Config[key];
             } else {
                 return def;
             }
@@ -393,9 +437,7 @@
          * @return {Array} calculated 模块数组
          */
         calculate: function(use) {
-            var config = this.Config,
-                modules = config.modules,
-                mods = use || [],
+            var mods = use || [],
                 i = 0,
                 l = mods.length,
                 calculated = [],
@@ -404,10 +446,15 @@
             
             for (; i < l; i++) {
                 n = mods[i];
-                m = modules[n];
+                m = Modules[n];
                 
                 if (!m) {
-                    this.log('module ' + n + ' not found.', 'warn', 'resolve');
+                    this.log('module ' + n + ' not found.', 'warn', 'calculate');
+                    continue;
+                }
+                
+                if (m.use) {
+                    calculated.push.apply(calculated, this.calculate(m.use));
                     continue;
                 }
                 
@@ -427,14 +474,8 @@
          * @param {Array} 模块数组
          */
         exclude: function(use) {
-            var config = this.Config,
-                env = this.Env,
-                modules = config.modules,
-                pending = env.pending,
-                loaded = env.loaded;
-            
-            return map(use, function(m) {
-                if (!loaded[m] && !pending[m] && modules[m]) {
+            return filter(use, function(m) {
+                if (!Loaded[m] && !Pending[m] && Modules[m]) {
                     return true;
                 }
             });
@@ -446,13 +487,11 @@
          * @param {Array} 模块数组
          */
         assort: function(use) {
-            var config = this.Config,
-                modules = config.modules,
-                assorted = {},
+            var assorted = {},
                 comboBase, module;
             
             each(use, function(m) {
-                module = modules[m];
+                module = Modules[m];
                 if (module) {
                     comboBase = this.getGroupConfig(module.group, 'comboBase', '');
                     assorted[comboBase] = assorted[comboBase] || [];
@@ -470,15 +509,9 @@
          * @return {Object} resolved 模块组对象
          */
         resolve: function(use) {
-            var config = this.Config,
-                env = this.Env,
-                loaded = env.loaded,
-                pending = env.pending,
-                modules = config.modules,
-                groups = config.groups,
-                maxLen = config.maxURLLength,
-                maxNum = config.maxComboNum,
-                comboSep = config.comboSep,
+            var maxLen = Config.maxURLLength,
+                maxNum = Config.maxComboNum,
+                comboSep = Config.comboSep,
                 comboSepLen = comboSep.length,
                 calculated = this.calculate(use),
                 excluded = this.exclude(calculated),
@@ -502,8 +535,8 @@
                 end = array.length - 1;
                 
                 each(array, function(m, i) {
-                    module = modules[m];
-                    group = groups[module.group];
+                    module = Modules[m];
+                    group = Groups[module.group];
                     type = module.type || 'js';
                     css = type === 'css';
                     
@@ -550,6 +583,7 @@
             each(resolved.mods.css, function(mod, i) {
                 this.insert(resolved.urls.css[i], mod, 'css');
             }, this);
+            
             each(resolved.mods.js, function(mod, i) {
                 this.insert(resolved.urls.js[i], mod, 'js');
             }, this);
@@ -565,10 +599,6 @@
          */
         insert: function(url, mod, type) {
             var self = this,
-                config = this.Config,
-                env = this.Env,
-                modules = config.modules,
-                pending = env.pending,
                 module, requires, async;
             
             function insert() {
@@ -580,20 +610,20 @@
             if (isArray(mod)) {
                 //combo
                 each(mod, function(m) {
-                    pending[m] = true;  
+                    Pending[m] = true;  
                 });
                 insert();
             } else {
                 //not combo
-                module = modules[mod];
+                module = Modules[mod];
                 requires = module.requires;
                 async = module.async !== false || (!requires || !requires.length);
                 if (async) {
-                    pending[mod] = true; 
+                    Pending[mod] = true; 
                     insert();
                 } else {
                     this.wait(requires, function() {
-                        pending[mod] = true;
+                        Pending[mod] = true;
                         insert();
                     });
                 }
@@ -609,11 +639,6 @@
          */
         wait: function(mod, callback) {
             var self = this,
-                config = this.Config,
-                env = this.Env,
-                loaded = env.loaded,
-                waiting = env.waiting,
-                modules = config.modules,
                 done = 0,
                 len, cb;
                 
@@ -628,11 +653,11 @@
                     this.wait(m, cb);
                 }, this);
             } else {
-                if (loaded[mod] || !modules[mod]) {
+                if (Loaded[mod] || !Modules[mod]) {
                     callback.call(self, [mod]);
                 } else {
-                    waiting[mod] = waiting[mod] || [];
-                    waiting[mod].push(callback);
+                    Waiting[mod] = Waiting[mod] || [];
+                    Waiting[mod].push(callback);
                 }
             }
             
@@ -646,23 +671,25 @@
          */
         done: function(mod) {
             var self = this,
-                env = this.Env,
-                loaded = env.loaded,
-                pending = env.pending,
-                waiting = env.waiting;
+                onload = Config.onload,
+                isLoaded;
                 
             if (isArray(mod)) {
                 each(mod, function(m) {
                     this.done(m);
                 }, this);
             } else {
-                delete pending[mod];
-                loaded[mod] = true;
-                if (waiting[mod]) {
-                    each(waiting[mod], function(cb) {
+                delete Pending[mod];
+                isLoaded = Loaded[mod];
+                Loaded[mod] = true;
+                if (!isLoaded && isFunction(onload)) {
+                    onload.call(self, self, mod);
+                }
+                if (Waiting[mod]) {
+                    each(Waiting[mod], function(cb) {
                         cb.call(this, [mod]);
                     }, this);
-                    delete waiting[mod];
+                    delete Waiting[mod];
                 }
             }
             
@@ -675,23 +702,18 @@
          * @param {String} mod 模块名
          */
         attach: function(mod) {
-            var env = this.Env,
-                config = this.Config,
-                modules = config.modules,
-                loaded = env.loaded,
-                attached = env.attached,
-                moduleFns = env.moduleFns,
-                fn;
+            var fn;
             
             //TODO add requires
+            //TODO shim
             if (isArray(mod)) {
                 each(mod, function(m) {
                     this.attach(m);
                 }, this);
             } else {
-                if (loaded[mod] && !attached[mod] && (fn = moduleFns[mod])) {
+                if (Loaded[mod] && !Attached[mod] && (fn = ModuleFns[mod])) {
                     fn.call(this, this);
-                    attached[mod] = true;
+                    Attached[mod] = true;
                 }
             }
             
@@ -703,24 +725,19 @@
          * @method add
          * @param {String} name 模块名
          * @param {Function} fn 模块函数
-         * @param {Object} config 模块配置
+         * @param {Object} Config 模块配置
          */
-        add: function(name, fn, config) {
-            var config = this.Config,
-                env = this.Env,
-                attached = env.attached,
-                loaded = env.loaded,
-                moduleFns = env.moduleFns;
-            
-            if (!loaded[name]) {
+        add: function(name, fn, Config) {
+            if (!Loaded[name]) {
                 this.done(name);
-            }    
-            delete attached[name];
+            }
+                
+            delete Attached[name];
             
-            if (moduleFns[name]) {
+            if (ModuleFns[name]) {
                 this.log('module ' + name + ' already exists.', 'warn', 'add');
             } else {
-                moduleFns[name] = fn;
+                ModuleFns[name] = fn;
             }
             
             return this;
@@ -735,7 +752,18 @@
         use: function() {
             var use = toArray(arguments),
                 callback = isFunction(use[use.length - 1]) ? use.pop() : null,
-                resolved = this.resolve(use);
+                core = Config.core,
+                resolved;
+            
+            if (!use.length || use[0] === '*') {
+                use = keys(Loaded);
+            }
+            
+            if (core && isArray(core) && core.length) {
+                use.unshift.apply(use, core);
+            }
+            
+            resolved = this.resolve(use);
 
             this.wait(resolved.calculated, function() {
                 this.attach(resolved.calculated);
@@ -748,22 +776,38 @@
         },
         
         /**
-         * 给Z添加对象，防止冲突 WTF API
-         * @method set
-         * @param {String} name 对象名
-         * @param {Object} obj 对象
-         * @param {Boolean} override 覆盖
+         * domready之后执行回调
+         * @method ready
+         * @param {String|Function} * 多个模块名称，逗号分开，或者是domready回调，类似$(fn);
+         * @param {Function} callback 回调函数
          */
-        set: function(name, obj, override) {
-            if (typeof this[name] !== 'undefined' && !override) {
-                this.log('Z.' + name + ' already exist, but you can override it by setting last param to true.', 'error', 'set');
-                return;
-            }
-            return (this[name] = obj);
+        ready: function() {
+            var self = this,
+                use = toArray(arguments),
+                readyFn = use[0],
+                callback = isFunction(use[use.length - 1]) ? use.pop() : null;
+            
+            if (isFunction(readyFn)) {
+                ready(readyFn, use[1] || self);
+            } else {
+                if (callback) {
+                    function domreadyCallback() {
+                        var args = toArray(arguments);
+                        ready(function() {
+                            callback.apply(self, args);    
+                        });
+                    }
+                    use.push(domreadyCallback);
+                }
+                this.use.apply(this, use);
+            } 
+            
+            return this;
         }
         
     });
     
-    window.Zoo = window.ZOO = Z.init();
+    // 暴露接口
+    window.Zoo = window.ZOO = ZOO.init();
     
 })(this);
